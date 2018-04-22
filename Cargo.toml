@@ -1,0 +1,16 @@
+[package]
+name = "os_socketaddr"
+version = "0.1.0"
+description = "A type for handling platform-native socket addresses (struct sockaddr)"
+keywords = ["sockaddr", "libc", "socket"]
+categories = ["network-programming", "os::unix-apis", "api-bindings"]
+license = "MIT OR Apache-2.0"
+authors = ["Anthony Baire <ayba@free.fr>"]
+repository = "https://github.com/a-ba/os_socketaddr"
+readme = "README.md"
+
+[badges]
+travis-ci = { repository = "a-ba/os_socketaddr", branch = "master" }
+
+[dependencies]
+libc = "0.2"
