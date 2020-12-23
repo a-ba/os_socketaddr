@@ -123,12 +123,6 @@ use libc::sockaddr_in;
 #[cfg(target_family = "unix")]
 use libc::sockaddr_in6;
 
-#[cfg(target_family = "unix")]
-use libc::in_addr;
-
-#[cfg(target_family = "unix")]
-use libc::in6_addr;
-
 #[cfg(target_family = "windows")]
 use winapi::shared::ws2def::AF_INET;
 
@@ -275,7 +269,7 @@ impl From<SocketAddr> for OsSocketAddr {
             sa6: unsafe {
                 match addr {
                     SocketAddr::V4(addr) => {
-                        let mut sa6 = std::mem::uninitialized();
+                        let mut sa6 = std::mem::zeroed();
                         *(&mut sa6 as *mut _ as *mut _) = addr;
                         sa6
                     }
@@ -305,6 +299,12 @@ impl std::fmt::Debug for OsSocketAddr {
 mod tests {
     use super::*;
     use std::net::SocketAddrV6;
+
+    #[cfg(target_family = "unix")]
+    use libc::in_addr;
+
+    #[cfg(target_family = "unix")]
+    use libc::in6_addr;
 
     fn check_as_mut(osa: &mut OsSocketAddr) {
         let ptr = osa as *mut _ as usize;
