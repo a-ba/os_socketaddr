@@ -141,12 +141,6 @@ use winapi::shared::ws2def::SOCKADDR_IN as sockaddr_in;
 #[cfg(target_family = "windows")]
 use winapi::shared::ws2ipdef::SOCKADDR_IN6_LH as sockaddr_in6;
 
-#[cfg(target_family = "windows")]
-use winapi::shared::inaddr::in_addr;
-
-#[cfg(target_family = "windows")]
-use winapi::shared::in6addr::in6_addr;
-
 #[derive(Copy, Clone)]
 pub struct OsSocketAddr {
     sa6: sockaddr_in6,
@@ -306,6 +300,12 @@ mod tests {
     #[cfg(target_family = "unix")]
     use libc::in6_addr;
 
+    #[cfg(target_family = "windows")]
+    use winapi::shared::inaddr::in_addr;
+
+    #[cfg(target_family = "windows")]
+    use winapi::shared::in6addr::in6_addr;
+
     fn check_as_mut(osa: &mut OsSocketAddr) {
         let ptr = osa as *mut _ as usize;
         let buf = osa.as_mut();
@@ -385,7 +385,7 @@ mod tests {
                 sin6_addr: *(&ip as *const _ as *const in6_addr),
                 sin6_port: 4242u16.to_be(),
                 sin6_flowinfo: 0x11223344,
-                u: unsafe { std::mem::zeroed() },
+                u: std::mem::zeroed(),
             };
             #[cfg(target_family = "windows")]
             let sa = {
