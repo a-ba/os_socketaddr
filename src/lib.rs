@@ -106,40 +106,16 @@ use std::net::SocketAddr;
 /// [mod]: index.html
 ///
 #[cfg(target_family = "unix")]
-use libc::AF_INET;
-
-#[cfg(target_family = "unix")]
-use libc::AF_INET6;
-
-#[cfg(target_family = "unix")]
-use libc::socklen_t;
-
-#[cfg(target_family = "unix")]
-use libc::sockaddr;
-
-#[cfg(target_family = "unix")]
-use libc::sockaddr_in;
-
-#[cfg(target_family = "unix")]
-use libc::sockaddr_in6;
+use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6};
 
 #[cfg(target_family = "windows")]
-use winapi::shared::ws2def::AF_INET;
-
-#[cfg(target_family = "windows")]
-use winapi::shared::ws2def::AF_INET6;
-
-#[cfg(target_family = "windows")]
-use winapi::um::ws2tcpip::socklen_t;
-
-#[cfg(target_family = "windows")]
-use winapi::shared::ws2def::SOCKADDR as sockaddr;
-
-#[cfg(target_family = "windows")]
-use winapi::shared::ws2def::SOCKADDR_IN as sockaddr_in;
-
-#[cfg(target_family = "windows")]
-use winapi::shared::ws2ipdef::SOCKADDR_IN6_LH as sockaddr_in6;
+use winapi::{
+    shared::{
+        ws2def::{AF_INET, AF_INET6, SOCKADDR as sockaddr, SOCKADDR_IN as sockaddr_in},
+        ws2ipdef::SOCKADDR_IN6_LH as sockaddr_in6,
+    },
+    um::ws2tcpip::socklen_t,
+};
 
 #[derive(Copy, Clone)]
 pub struct OsSocketAddr {
@@ -295,16 +271,10 @@ mod tests {
     use std::net::SocketAddrV6;
 
     #[cfg(target_family = "unix")]
-    use libc::in_addr;
-
-    #[cfg(target_family = "unix")]
-    use libc::in6_addr;
+    use libc::{in6_addr, in_addr};
 
     #[cfg(target_family = "windows")]
-    use winapi::shared::inaddr::in_addr;
-
-    #[cfg(target_family = "windows")]
-    use winapi::shared::in6addr::in6_addr;
+    use winapi::shared::{in6addr::in6_addr, inaddr::in_addr};
 
     fn check_as_mut(osa: &mut OsSocketAddr) {
         let ptr = osa as *mut _ as usize;
