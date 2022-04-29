@@ -446,7 +446,7 @@ mod tests {
                 assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
             }
             check_as_mut(&mut osa);
-        };
+        }
 
         check(OsSocketAddr::new());
         check(None.into());
