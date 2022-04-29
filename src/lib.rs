@@ -92,6 +92,7 @@
 
 extern crate libc;
 
+use std::convert::TryInto;
 use std::net::SocketAddr;
 
 /// A type for handling platform-native socket addresses (`struct sockaddr`)
@@ -223,14 +224,42 @@ impl Into<Option<SocketAddr>> for OsSocketAddr {
     /// converted into `SocketAddr`, otherwise the function returns None.
     ///
     fn into(self) -> Option<SocketAddr> {
+        self.try_into().ok()
+    }
+}
+
+impl TryInto<SocketAddr> for OsSocketAddr {
+    type Error = BadFamilyError;
+
+    /// Attempt to convert the internal buffer into a `std::net::SocketAddr` object
+    ///
+    /// The internal buffer is assumed to be a `libc::sockaddr`.
+    ///
+    /// If the value of `.sa_family` resolves to `AF_INET` or `AF_INET6` then the buffer is
+    /// converted into `SocketAddr`, otherwise the function returns an error.
+    ///
+    fn try_into(self) -> Result<SocketAddr, BadFamilyError> {
         unsafe {
             match self.sa6.sin6_family as i32 {
-                AF_INET => Some(SocketAddr::V4(*(self.as_ptr() as *const _))),
-                AF_INET6 => Some(SocketAddr::V6(*(self.as_ptr() as *const _))),
-                _ => None,
+                AF_INET => Ok(SocketAddr::V4(*(self.as_ptr() as *const _))),
+                AF_INET6 => Ok(SocketAddr::V6(*(self.as_ptr() as *const _))),
+                f => Err(BadFamilyError(f)),
             }
         }
     }
+}
+
+/// Error type returned by [OsSocketAddr::try_into()]
+#[derive(Debug,Eq,PartialEq)]
+pub struct BadFamilyError(i32);
+impl std::error::Error for BadFamilyError {}
+impl std::fmt::Display for BadFamilyError {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+   {
+       "not an ip address (family=".fmt(f)?;
+       self.0.fmt(f)?;
+       ')'.fmt(f)
+   }
 }
 
 impl From<SocketAddr> for OsSocketAddr {
@@ -333,6 +362,7 @@ mod tests {
             assert_eq!(osa.len() as usize, std::mem::size_of::<sockaddr_in>());
             assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
             assert_eq!(osa.into_addr(), Some(addr));
+            assert_eq!(osa.try_into(), Ok(addr));
             assert_eq!(OsSocketAddr::from(addr).into_addr(), Some(addr));
             {
                 let buf = osa.as_ref();
@@ -389,6 +419,7 @@ mod tests {
             assert_eq!(osa.len() as usize, std::mem::size_of::<sockaddr_in6>());
             assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
             assert_eq!(osa.into_addr(), Some(addr));
+            assert_eq!(osa.try_into(), Ok(addr));
             assert_eq!(OsSocketAddr::from(addr).into_addr(), Some(addr));
             {
                 let buf = osa.as_ref();
@@ -401,25 +432,33 @@ mod tests {
 
     #[test]
     fn os_socketaddr_other() {
-        fn check(osa: &mut OsSocketAddr) {
+        fn check(mut osa: OsSocketAddr) {
             assert_eq!(osa.into_addr(), None);
+
+            let r : Result<SocketAddr, _> = osa.try_into();
+            assert!(r.is_err());
             {
                 let buf = osa.as_ref();
                 assert_eq!(buf.len(), 0);
                 assert_eq!(osa.len(), 0);
                 assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
             }
-            check_as_mut(osa);
+            check_as_mut(&mut osa);
         };
 
-        check(&mut OsSocketAddr::new());
-        check(&mut None.into());
-
+        check(OsSocketAddr::new());
+        check(None.into());
         unsafe {
-            check(&mut OsSocketAddr::from_raw_parts(
+            check(OsSocketAddr::from_raw_parts(
                 [0xde, 0xad, 0xbe, 0xef].as_ptr(),
                 4,
             ));
         }
+
+        let r : Result<SocketAddr, BadFamilyError> = OsSocketAddr::new().try_into();
+        assert!(r.is_err());
+        let e = r.unwrap_err();
+        assert_eq!(e, BadFamilyError(0));
+        assert_eq!(e.to_string(), "not an ip address (family=0)");
     }
 }
