@@ -1,7 +1,13 @@
 # os_socketaddr
 
-[![Build Status](https://travis-ci.org/a-ba/os_socketaddr.svg?branch=master)](https://travis-ci.org/a-ba/os_socketaddr)
-[![Crates.io](https://img.shields.io/crates/v/os_socketaddr.svg)](https://crates.io/crates/os_socketaddr)
+[![Crates.io][crates-badge]][crates-url]
+[![Build Status][actions-badge]][actions-url]
+
+[crates-badge]:  https://img.shields.io/crates/v/os_socketaddr.svg
+[crates-url]:    https://crates.io/crates/os_socketaddr
+[actions-badge]: https://github.com/a-ba/os_socketaddr/workflows/CI/badge.svg?branch=master
+[actions-url]:   https://github.com/a-ba/os_socketaddr/actions?query=workflow%3ACI+branch%3Amaster
+
 
 This crate provides a type that can act as a platform-native socket address
 (i.e. `libc::sockaddr`)
