@@ -24,7 +24,8 @@
 //! use self::os_socketaddr::OsSocketAddr;
 //!
 //! #[cfg(target_family = "unix")]
-//! fn send(socket: c_int, buf: &[u8], dst: SocketAddr) -> ssize_t {
+//! fn sendto(socket: c_int, buf: &[u8], dst: SocketAddr) -> ssize_t
+//! {
 //!     let addr : OsSocketAddr = dst.into();
 //!     unsafe {
 //!         libc::sendto(socket, buf.as_ptr() as *const c_void, buf.len() as size_t, 0,
@@ -32,8 +33,21 @@
 //!     }
 //! }
 //!
+//! #[cfg(target_family = "unix")]
+//! fn recvfrom(socket: c_int, buf: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
+//! {
+//!     let mut addr = OsSocketAddr::new();
+//!     let mut addrlen = addr.capacity();
+//!     let nb = unsafe {
+//!         libc::recvfrom(socket, buf.as_mut_ptr() as *mut c_void, buf.len(), 0,
+//!                        addr.as_mut_ptr(), &mut addrlen as *mut _)
+//!     };
+//!     (nb, addr.into())
+//! }
+//!
 //! #[cfg(target_family = "windows")]
-//! fn send(socket: winapi::um::winsock2::SOCKET, buf: &mut [u8], dst: SocketAddr) -> ssize_t {
+//! fn sendto(socket: winapi::um::winsock2::SOCKET, buf: &mut [u8], dst: SocketAddr) -> ssize_t
+//! {
 //!     let addr : OsSocketAddr = dst.into();
 //!     let mut wsabuf = winapi::shared::ws2def::WSABUF {
 //!         len: buf.len() as u32,
@@ -52,20 +66,8 @@
 //!     }
 //! }
 //!
-//! #[cfg(target_family = "unix")]
-//! fn receive(socket: c_int, buf: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
-//! {
-//!     let mut addr = OsSocketAddr::new();
-//!     let mut addrlen = addr.capacity();
-//!     let nb = unsafe {
-//!         libc::recvfrom(socket, buf.as_mut_ptr() as *mut c_void, buf.len(), 0,
-//!                        addr.as_mut_ptr(), &mut addrlen as *mut _)
-//!     };
-//!     (nb, addr.into())
-//! }
-//!
 //! #[cfg(target_family = "windows")]
-//! fn receive(socket: winapi::um::winsock2::SOCKET, buf: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
+//! fn recvfrom(socket: winapi::um::winsock2::SOCKET, buf: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
 //! {
 //!     let mut addr = OsSocketAddr::new();
 //!     let mut addrlen = addr.capacity();
