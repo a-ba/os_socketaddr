@@ -18,7 +18,7 @@ address) and the conversion functions from/into `SocketAddr`.
 
 ## Example
 
-```
+```rust
 extern crate libc;
 extern crate os_socketaddr;
 
