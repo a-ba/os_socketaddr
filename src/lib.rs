@@ -1,18 +1,18 @@
 //! This crate provides a type that can act as a platform-native socket address
-//! (i.e. `libc::sockaddr`)
+//! (i.e. [libc::sockaddr])
 //!
-//! #Motivation
+//! # Motivation
 //!
-//! The std crate provides `std::net::SocketAddr` for managing socket addresses. Its `V4` variant
-//! encapsulates a `libc::sockaddr_in` and its `V6` variant encapsulates a `libc::sockaddr_in6`.
-//! However there is no easy way to convert `SocketAddr` from/into a `libc::sockaddr`, because
+//! The std crate provides [SocketAddr] for managing socket addresses. Its `V4` variant
+//! encapsulates [libc::sockaddr_in] and its `V6` variant encapsulates [libc::sockaddr_in6].
+//! However there is no easy way to convert `SocketAddr` from/into a `libc::sockaddr` because
 //! `SocketAddr` is a rust enum.
 //!
-//! This crate provides `OsSocketAddr` which holds a `libc::sockaddr` (containing an IPv4 or IPv6
-//! address) and the conversion functions from/into `std::net::SocketAddr`.
+//! This crate provides [OsSocketAddr] which holds a `libc::sockaddr` (containing an IPv4 or IPv6
+//! address) and the conversion functions from/into `SocketAddr`.
 //!
 //!
-//! #Example
+//! # Example
 //!
 //! ```
 //! # mod foo {
@@ -97,17 +97,6 @@ extern crate libc;
 use std::convert::TryInto;
 use std::net::SocketAddr;
 
-/// A type for handling platform-native socket addresses (`struct sockaddr`)
-///
-/// This type holds a buffer enough big to have a `libc::sockaddr_in` or `libc::sockaddr_in6`
-/// struct. Its content can be arbitrary written using `.as_mut()` or `.as_mut_ptr()`.
-///
-/// It also provides the conversion functions from/into `std::net::SocketAddr`.
-///
-/// See [module level][mod] documentation for more details.
-///
-/// [mod]: index.html
-///
 #[cfg(target_family = "unix")]
 use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6};
 
@@ -120,6 +109,16 @@ use winapi::{
     um::ws2tcpip::socklen_t,
 };
 
+/// A type for handling platform-native socket addresses (`struct sockaddr`)
+///
+/// This type has a buffer big enough to hold a [libc::sockaddr_in] or [libc::sockaddr_in6]
+/// struct. Its content can be arbitrary written using [.as_mut()](Self::as_mut) or
+/// [.as_mut_ptr()](Self::as_mut_ptr).
+///
+/// It also provides the conversion functions from/into [SocketAddr].
+///
+/// See [crate] level documentation.
+///
 #[derive(Copy, Clone)]
 pub struct OsSocketAddr {
     sa6: sockaddr_in6,
@@ -138,7 +137,7 @@ impl OsSocketAddr {
     ///
     /// # Panics
     ///
-    /// Panics if `len` is bigger that the size of `libc::sockaddr_in6`
+    /// Panics if `len` is bigger that the size of [sockaddr_in6]
     ///
     pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
         let mut raw = OsSocketAddr::new();
@@ -147,14 +146,14 @@ impl OsSocketAddr {
         raw
     }
 
-    /// Create a new socket address from a `std::net::SocketAddr` object
+    /// Create a new socket address from a [SocketAddr] object
     pub fn from(addr: SocketAddr) -> Self {
         addr.into()
     }
 
-    /// Attempt to convert the internal buffer into a `std::net::SocketAddr` object
+    /// Attempt to convert the internal buffer into a [SocketAddr] object
     ///
-    /// The internal buffer is assumed to be a `libc::sockaddr`.
+    /// The internal buffer is assumed to be a [sockaddr].
     ///
     /// If the value of `.sa_family` resolves to `AF_INET` or `AF_INET6` then the buffer is
     /// converted into `SocketAddr`, otherwise the function returns None.
@@ -166,8 +165,8 @@ impl OsSocketAddr {
     /// Return the length of the address
     ///
     /// The result depends on the value of `.sa_family` in the internal buffer:
-    /// * `AF_INET`  -> the size of `sockaddr_in`
-    /// * `AF_INET6` -> the size of `sockaddr_in6`
+    /// * `AF_INET`  -> the size of [sockaddr_in]
+    /// * `AF_INET6` -> the size of [sockaddr_in6]
     /// * *other* -> 0
     pub fn len(&self) -> socklen_t {
         (match self.sa6.sin6_family as i32 {
@@ -196,7 +195,8 @@ impl OsSocketAddr {
 impl AsRef<[u8]> for OsSocketAddr {
     /// Get the internal buffer as a byte slice
     ///
-    /// Note: the actual length of slice depends on the value of `.sa_family` (see `.len()`)
+    /// Note: the actual length of slice depends on the value of `.sa_family`
+    /// (see [.len()](Self::len))
     ///
     fn as_ref(&self) -> &[u8] {
         unsafe {
@@ -218,9 +218,9 @@ impl AsMut<[u8]> for OsSocketAddr {
 }
 
 impl Into<Option<SocketAddr>> for OsSocketAddr {
-    /// Attempt to convert the internal buffer into a `std::net::SocketAddr` object
+    /// Attempt to convert the internal buffer into a [SocketAddr] object
     ///
-    /// The internal buffer is assumed to be a `libc::sockaddr`.
+    /// The internal buffer is assumed to be a [sockaddr].
     ///
     /// If the value of `.sa_family` resolves to `AF_INET` or `AF_INET6` then the buffer is
     /// converted into `SocketAddr`, otherwise the function returns None.
@@ -233,9 +233,9 @@ impl Into<Option<SocketAddr>> for OsSocketAddr {
 impl TryInto<SocketAddr> for OsSocketAddr {
     type Error = BadFamilyError;
 
-    /// Attempt to convert the internal buffer into a `std::net::SocketAddr` object
+    /// Attempt to convert the internal buffer into a [SocketAddr] object
     ///
-    /// The internal buffer is assumed to be a `libc::sockaddr`.
+    /// The internal buffer is assumed to be a [sockaddr].
     ///
     /// If the value of `.sa_family` resolves to `AF_INET` or `AF_INET6` then the buffer is
     /// converted into `SocketAddr`, otherwise the function returns an error.
