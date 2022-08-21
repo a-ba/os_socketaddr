@@ -3,10 +3,10 @@
 //!
 //! # Motivation
 //!
-//! The std crate provides [SocketAddr] for managing socket addresses. Its `V4` variant
-//! encapsulates [libc::sockaddr_in] and its `V6` variant encapsulates [libc::sockaddr_in6].
-//! However there is no easy way to convert `SocketAddr` from/into a `libc::sockaddr` because
-//! `SocketAddr` is a rust enum.
+//! The std crate provides [SocketAddr] for managing socket addresses. However there is no easy way
+//! to convert `SocketAddr` from/into a `libc::sockaddr` because `SocketAddr` has a different
+//! internal layout.
+
 //!
 //! This crate provides [OsSocketAddr] which holds a `libc::sockaddr` (containing an IPv4 or IPv6
 //! address) and the conversion functions from/into `SocketAddr`.
@@ -95,16 +95,18 @@
 extern crate libc;
 
 use std::convert::TryInto;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr,SocketAddrV4,SocketAddrV6};
 
 #[cfg(target_family = "unix")]
-use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6};
+use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6, in_addr, in6_addr};
 
 #[cfg(target_family = "windows")]
 use winapi::{
     shared::{
+        inaddr::in_addr, in6addr::in6_addr,
         ws2def::{AF_INET, AF_INET6, SOCKADDR as sockaddr, SOCKADDR_IN as sockaddr_in},
         ws2ipdef::SOCKADDR_IN6_LH as sockaddr_in6,
+        ws2ipdef::SOCKADDR_IN6_LH_u,
     },
     um::ws2tcpip::socklen_t,
 };
@@ -120,7 +122,9 @@ use winapi::{
 /// See [crate] level documentation.
 ///
 #[derive(Copy, Clone)]
-pub struct OsSocketAddr {
+#[repr(C)]
+pub union OsSocketAddr {
+    sa4: sockaddr_in,
     sa6: sockaddr_in6,
 }
 
@@ -169,7 +173,7 @@ impl OsSocketAddr {
     /// * `AF_INET6` -> the size of [sockaddr_in6]
     /// * *other* -> 0
     pub fn len(&self) -> socklen_t {
-        (match self.sa6.sin6_family as i32 {
+        (match unsafe { self.sa6.sin6_family } as i32 {
             AF_INET => std::mem::size_of::<sockaddr_in>(),
             AF_INET6 => std::mem::size_of::<sockaddr_in6>(),
             _ => 0,
@@ -183,12 +187,12 @@ impl OsSocketAddr {
 
     /// Get a pointer to the internal buffer
     pub fn as_ptr(&self) -> *const sockaddr {
-        &self.sa6 as *const _ as *const _
+        unsafe { &self.sa6 as *const _ as *const _ }
     }
 
     /// Get a mutable pointer to the internal buffer
     pub fn as_mut_ptr(&mut self) -> *mut sockaddr {
-        &mut self.sa6 as *mut _ as *mut _
+        unsafe { &mut self.sa6 as *mut _ as *mut _ }
     }
 }
 
@@ -243,8 +247,29 @@ impl TryInto<SocketAddr> for OsSocketAddr {
     fn try_into(self) -> Result<SocketAddr, BadFamilyError> {
         unsafe {
             match self.sa6.sin6_family as i32 {
-                AF_INET => Ok(SocketAddr::V4(*(self.as_ptr() as *const _))),
-                AF_INET6 => Ok(SocketAddr::V6(*(self.as_ptr() as *const _))),
+                AF_INET => {
+                    #[cfg(not(target_family = "windows"))]
+                    let ip = self.sa4.sin_addr.s_addr;
+                    #[cfg(target_family = "windows")]
+                    let ip = *self.sa4.sin_addr.S_un.S_addr();
+
+                    Ok(SocketAddr::V4(SocketAddrV4::new(
+                            Ipv4Addr::from(u32::from_be(ip)),
+                            u16::from_be(self.sa4.sin_port),
+                        )))
+                },
+                AF_INET6 => {
+                    #[cfg(not(target_family = "windows"))]
+                    let (ip, scope_id) = (self.sa6.sin6_addr.s6_addr, self.sa6.sin6_scope_id);
+                    #[cfg(target_family = "windows")]
+                    let (ip, scope_id) = (*self.sa6.sin6_addr.u.Byte(), *self.sa6.u.sin6_scope_id());
+
+                    Ok(SocketAddr::V6(SocketAddrV6::new(
+                            Ipv6Addr::from(u128::from_be_bytes(ip)),
+                            u16::from_be(self.sa6.sin6_port),
+                            self.sa6.sin6_flowinfo,
+                            scope_id)))
+                },
                 f => Err(BadFamilyError(f)),
             }
         }
@@ -266,17 +291,64 @@ impl std::fmt::Display for BadFamilyError {
 
 impl From<SocketAddr> for OsSocketAddr {
     fn from(addr: SocketAddr) -> Self {
-        OsSocketAddr {
-            sa6: unsafe {
-                match addr {
-                    SocketAddr::V4(addr) => {
-                        let mut sa6 = std::mem::zeroed();
-                        *(&mut sa6 as *mut _ as *mut _) = addr;
-                        sa6
-                    }
-                    SocketAddr::V6(addr) => *(&addr as *const _ as *const _),
+        match addr {
+            SocketAddr::V4(addr) => {
+                let raw_ip = u32::to_be((*addr.ip()).into());
+                Self{ sa4: sockaddr_in{
+                    #[cfg(not(target_os = "macos"))]
+                    sin_family: AF_INET as u16,
+
+                    #[cfg(target_os = "macos")]
+                    sin_len: std::mem::size_of::<sockaddr_in>() as u8,
+                    #[cfg(target_os = "macos")]
+                    sin_family: AF_INET as u8,
+
+                    #[cfg(not(target_family = "windows"))]
+                    sin_addr: in_addr{ s_addr: raw_ip },
+                    #[cfg(target_family = "windows")]
+                    sin_addr: unsafe {
+                        let mut ip : in_addr = std::mem::zeroed();
+                        *ip.S_un.S_addr_mut() = raw_ip;
+                        ip
+                    },
+
+                    sin_port: u16::to_be(addr.port()),
+                    sin_zero: [0; 8],
                 }
-            },
+            }},
+            SocketAddr::V6(addr) => {
+                let raw_ip = u128::to_be_bytes((*addr.ip()).into());
+                Self{ sa6: sockaddr_in6{
+                    #[cfg(not(target_os = "macos"))]
+                    sin6_family: AF_INET6 as u16,
+
+                    #[cfg(target_os = "macos")]
+                    sin6_len: std::mem::size_of::<sockaddr_in6>() as u8,
+                    #[cfg(target_os = "macos")]
+                    sin6_family: AF_INET6 as u8,
+
+                    #[cfg(not(target_family = "windows"))]
+                    sin6_addr: in6_addr{ s6_addr: raw_ip },
+                    #[cfg(target_family = "windows")]
+                    sin6_addr: unsafe {
+                        let mut ip : in6_addr = std::mem::zeroed();
+                        *ip.u.Byte_mut() = raw_ip;
+                        ip
+                    },
+
+                    #[cfg(not(target_family = "windows"))]
+                    sin6_scope_id: addr.scope_id(),
+                    #[cfg(target_family = "windows")]
+                    u: unsafe {
+                        let mut u : SOCKADDR_IN6_LH_u = std::mem::zeroed();
+                        *u.sin6_scope_id_mut() = addr.scope_id();
+                        u
+                    },
+
+                    sin6_port: u16::to_be(addr.port()),
+                    sin6_flowinfo: addr.flowinfo(),
+                }}
+            }
         }
     }
 }
@@ -303,9 +375,6 @@ mod tests {
 
     #[cfg(target_family = "unix")]
     use libc::{in6_addr, in_addr};
-
-    #[cfg(target_family = "windows")]
-    use winapi::shared::{in6addr::in6_addr, inaddr::in_addr};
 
     fn check_as_mut(osa: &mut OsSocketAddr) {
         let ptr = osa as *mut _ as usize;
