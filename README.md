@@ -1,6 +1,7 @@
 # os_socketaddr
 
 [![Crates.io][crates-badge]][crates-url]
+![License: Mit or Apache 2.0](https://img.shields.io/badge/license-MIT_or_Apache_2.0-blue.svg)
 [![Build Status][actions-badge]][actions-url]
 
 [crates-badge]:  https://img.shields.io/crates/v/os_socketaddr.svg
