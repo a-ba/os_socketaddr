@@ -23,69 +23,64 @@
 //! use self::libc::{c_int, c_void, size_t, ssize_t};
 //! use self::os_socketaddr::OsSocketAddr;
 //!
+//! ////////// unix examples //////////
+//!
 //! #[cfg(target_family = "unix")]
-//! fn sendto(socket: c_int, buf: &[u8], dst: SocketAddr) -> ssize_t
+//! fn sendto(socket: c_int, payload: &[u8], dst: SocketAddr) -> ssize_t
 //! {
 //!     let addr : OsSocketAddr = dst.into();
 //!     unsafe {
-//!         libc::sendto(socket, buf.as_ptr() as *const c_void, buf.len() as size_t, 0,
+//!         libc::sendto(socket, payload.as_ptr() as *const c_void, payload.len() as size_t, 0,
 //!                      addr.as_ptr(), addr.len())
 //!     }
 //! }
 //!
 //! #[cfg(target_family = "unix")]
-//! fn recvfrom(socket: c_int, buf: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
+//! fn recvfrom(socket: c_int, payload: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
 //! {
 //!     let mut addr = OsSocketAddr::new();
 //!     let mut addrlen = addr.capacity();
 //!     let nb = unsafe {
-//!         libc::recvfrom(socket, buf.as_mut_ptr() as *mut c_void, buf.len(), 0,
+//!         libc::recvfrom(socket, payload.as_mut_ptr() as *mut c_void, payload.len(), 0,
 //!                        addr.as_mut_ptr(), &mut addrlen as *mut _)
 //!     };
 //!     (nb, addr.into())
 //! }
 //!
+//! ////////// windows examples //////////
+//!
 //! #[cfg(target_family = "windows")]
-//! fn sendto(socket: winapi::um::winsock2::SOCKET, buf: &mut [u8], dst: SocketAddr) -> ssize_t
+//! fn sendto(socket: winapi::um::winsock2::SOCKET,
+//!           payload: &mut winapi::shared::ws2def::WSABUF,
+//!           dst: SocketAddr) -> ssize_t
 //! {
 //!     let addr : OsSocketAddr = dst.into();
-//!     let mut wsabuf = winapi::shared::ws2def::WSABUF {
-//!         len: buf.len() as u32,
-//!         buf: buf.as_ptr() as *mut i8,
-//!     };
-//!     let mut numberOfBytesSent: u32 = 0;
-//!     let nb = unsafe {
-//!         winapi::um::winsock2::WSASendTo(socket, &mut wsabuf, 1u32, &mut numberOfBytesSent, 0u32,
+//!     let mut nb : u32 = 0;
+//!     match unsafe {
+//!         winapi::um::winsock2::WSASendTo(socket, payload, 1u32, &mut nb, 0u32,
 //!                                         addr.as_ptr(), addr.len() as i32,
 //!                                         std::ptr::null_mut::<winapi::um::minwinbase::OVERLAPPED>(), None)
-//!     };
-//!     if nb == 0 {
-//!         numberOfBytesSent as isize
-//!     } else {
-//!         -1
+//!     } {
+//!         0 => nb as ssize_t,
+//!         _ => -1,
 //!     }
 //! }
 //!
 //! #[cfg(target_family = "windows")]
-//! fn recvfrom(socket: winapi::um::winsock2::SOCKET, buf: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
+//! fn recvfrom(socket: winapi::um::winsock2::SOCKET,
+//!             payload: &mut winapi::shared::ws2def::WSABUF) -> (ssize_t, Option<SocketAddr>)
 //! {
 //!     let mut addr = OsSocketAddr::new();
 //!     let mut addrlen = addr.capacity();
-//!     let mut wsabuf = winapi::shared::ws2def::WSABUF {
-//!         len: buf.len() as u32,
-//!         buf: buf.as_ptr() as *mut i8,
-//!     };
-//!     let mut numberOfBytesRecvd: u32 = 0;
-//!     let mut flags: u32 = 0;
-//!     let nb = unsafe {
-//!         winapi::um::winsock2::WSARecvFrom(socket, &mut wsabuf, 1u32, &mut numberOfBytesRecvd, &mut flags,
+//!     let mut nb : u32 = 0;
+//!     let mut flags : u32 = 0;
+//!     match unsafe {
+//!         winapi::um::winsock2::WSARecvFrom(socket, payload, 1u32, &mut nb, &mut flags,
 //!                                           addr.as_mut_ptr(), &mut addrlen as *mut _,
 //!                                           std::ptr::null_mut::<winapi::um::minwinbase::OVERLAPPED>(), None)
-//!     };
-//!     if nb == 0 {
-//!         (numberOfBytesRecvd as isize, addr.into())
-//!     } else {
-//!         (-1, None)
+//!     } {
+//!         0 => (nb as ssize_t, addr.into()),
+//!         _ => (-1, None),
 //!     }
 //! }
 //! # }
