@@ -97,16 +97,14 @@ extern crate libc;
 use std::convert::TryInto;
 use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr,SocketAddrV4,SocketAddrV6};
 
-#[cfg(target_family = "unix")]
+#[cfg(not(target_os = "windows"))]
 use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6, in_addr, in6_addr};
 
-#[cfg(target_family = "windows")]
+#[cfg(target_os = "windows")]
 use winapi::{
     shared::{
-        inaddr::in_addr, in6addr::in6_addr,
         ws2def::{AF_INET, AF_INET6, SOCKADDR as sockaddr, SOCKADDR_IN as sockaddr_in},
         ws2ipdef::SOCKADDR_IN6_LH as sockaddr_in6,
-        ws2ipdef::SOCKADDR_IN6_LH_u,
     },
     um::ws2tcpip::socklen_t,
 };
@@ -248,9 +246,9 @@ impl TryInto<SocketAddr> for OsSocketAddr {
         unsafe {
             match self.sa6.sin6_family as i32 {
                 AF_INET => {
-                    #[cfg(not(target_family = "windows"))]
+                    #[cfg(not(target_os = "windows"))]
                     let ip = self.sa4.sin_addr.s_addr;
-                    #[cfg(target_family = "windows")]
+                    #[cfg(target_os = "windows")]
                     let ip = *self.sa4.sin_addr.S_un.S_addr();
 
                     Ok(SocketAddr::V4(SocketAddrV4::new(
@@ -259,9 +257,9 @@ impl TryInto<SocketAddr> for OsSocketAddr {
                         )))
                 },
                 AF_INET6 => {
-                    #[cfg(not(target_family = "windows"))]
+                    #[cfg(not(target_os = "windows"))]
                     let (ip, scope_id) = (self.sa6.sin6_addr.s6_addr, self.sa6.sin6_scope_id);
-                    #[cfg(target_family = "windows")]
+                    #[cfg(target_os = "windows")]
                     let (ip, scope_id) = (*self.sa6.sin6_addr.u.Byte(), *self.sa6.u.sin6_scope_id());
 
                     Ok(SocketAddr::V6(SocketAddrV6::new(
@@ -294,60 +292,115 @@ impl From<SocketAddr> for OsSocketAddr {
         match addr {
             SocketAddr::V4(addr) => {
                 let raw_ip = u32::to_be((*addr.ip()).into());
-                Self{ sa4: sockaddr_in{
-                    #[cfg(not(target_os = "macos"))]
+
+                #[cfg(any(
+                        target_os = "android",
+                        target_os = "emscripten",
+                        target_os = "fuchsia",
+                        target_os = "illumos",
+                        target_os = "l4re",
+                        target_os = "linux",
+                        target_os = "redox",
+                        target_os = "solaris",
+                        ))]
+                return Self{ sa4: sockaddr_in{
                     sin_family: AF_INET as u16,
-
-                    #[cfg(target_os = "macos")]
-                    sin_len: std::mem::size_of::<sockaddr_in>() as u8,
-                    #[cfg(target_os = "macos")]
-                    sin_family: AF_INET as u8,
-
-                    #[cfg(not(target_family = "windows"))]
-                    sin_addr: in_addr{ s_addr: raw_ip },
-                    #[cfg(target_family = "windows")]
-                    sin_addr: unsafe {
-                        let mut ip : in_addr = std::mem::zeroed();
-                        *ip.S_un.S_addr_mut() = raw_ip;
-                        ip
-                    },
-
                     sin_port: u16::to_be(addr.port()),
-                    sin_zero: [0; 8],
-                }
-            }},
+                    sin_addr: in_addr{ s_addr: raw_ip },
+                    sin_zero: Default::default(),
+                }};
+
+                #[cfg(any(
+                        target_os = "dragonfly",
+                        target_os = "freebsd",
+                        target_os = "haiku",
+                        target_os = "hermit",
+                        target_os = "ios",
+                        target_os = "macos",
+                        target_os = "netbsd",
+                        target_os = "openbsd",
+                        target_os = "vxworks",
+                        target_os = "watchos",
+                        ))]
+                return Self{ sa4: sockaddr_in {
+                    sin_len: std::mem::size_of::<sockaddr_in>() as u8,
+                    sin_family: AF_INET as u8,
+                    sin_port: u16::to_be(addr.port()),
+                    sin_addr: in_addr{ s_addr: raw_ip },
+                    sin_zero: Default::default(),
+                }};
+
+                #[cfg(target_os = "windows")]
+                return {
+                    let mut osa = Self{ sa4: sockaddr_in{
+                        sin_family: AF_INET as u16,
+                        sin_port: u16::to_be(addr.port()),
+                        sin_addr: unsafe { std::mem::zeroed() },
+                        sin_zero: Default::default(),
+                    }};
+                    unsafe { *osa.sa4.sin_addr.S_un.S_addr_mut() = raw_ip; }
+                    osa
+                };
+            },
             SocketAddr::V6(addr) => {
                 let raw_ip = u128::to_be_bytes((*addr.ip()).into());
-                Self{ sa6: sockaddr_in6{
-                    #[cfg(not(target_os = "macos"))]
+
+                #[cfg(any(
+                        target_os = "android",
+                        target_os = "emscripten",
+                        target_os = "fuchsia",
+                        target_os = "illumos",
+                        target_os = "l4re",
+                        target_os = "linux",
+                        target_os = "redox",
+                        target_os = "solaris",
+                        ))]
+                return Self{ sa6: sockaddr_in6{
                     sin6_family: AF_INET6 as u16,
-
-                    #[cfg(target_os = "macos")]
-                    sin6_len: std::mem::size_of::<sockaddr_in6>() as u8,
-                    #[cfg(target_os = "macos")]
-                    sin6_family: AF_INET6 as u8,
-
-                    #[cfg(not(target_family = "windows"))]
-                    sin6_addr: in6_addr{ s6_addr: raw_ip },
-                    #[cfg(target_family = "windows")]
-                    sin6_addr: unsafe {
-                        let mut ip : in6_addr = std::mem::zeroed();
-                        *ip.u.Byte_mut() = raw_ip;
-                        ip
-                    },
-
-                    #[cfg(not(target_family = "windows"))]
-                    sin6_scope_id: addr.scope_id(),
-                    #[cfg(target_family = "windows")]
-                    u: unsafe {
-                        let mut u : SOCKADDR_IN6_LH_u = std::mem::zeroed();
-                        *u.sin6_scope_id_mut() = addr.scope_id();
-                        u
-                    },
-
                     sin6_port: u16::to_be(addr.port()),
                     sin6_flowinfo: addr.flowinfo(),
-                }}
+                    sin6_addr: in6_addr{ s6_addr: raw_ip },
+                    sin6_scope_id: addr.scope_id(),
+                    #[cfg(any(target_os = "solaris", target_os = "illumos"))]
+                    __sin6_src_id: 0,
+                }};
+
+                #[cfg(any(
+                        target_os = "dragonfly",
+                        target_os = "freebsd",
+                        target_os = "haiku",
+                        target_os = "hermit",
+                        target_os = "ios",
+                        target_os = "macos",
+                        target_os = "netbsd",
+                        target_os = "openbsd",
+                        target_os = "vxworks",
+                        target_os = "watchos",
+                        ))]
+                return Self{ sa6: sockaddr_in6{
+                    sin6_len: std::mem::size_of::<sockaddr_in6>() as u8,
+                    sin6_family: AF_INET6 as u8,
+                    sin6_port: u16::to_be(addr.port()),
+                    sin6_flowinfo: addr.flowinfo(),
+                    sin6_addr: in6_addr{ s6_addr: raw_ip },
+                    sin6_scope_id: addr.scope_id(),
+                }};
+
+                #[cfg(target_os = "windows")]
+                return {
+                    let mut osa = Self{ sa6: sockaddr_in6{
+                        sin6_family: AF_INET6 as u16,
+                        sin6_port: u16::to_be(addr.port()),
+                        sin6_flowinfo: addr.flowinfo(),
+                        sin6_addr: unsafe { std::mem::zeroed() },
+                        u:         unsafe { std::mem::zeroed() },
+                    }};
+                    unsafe {
+                        *osa.sa6.sin6_addr.u.Byte_mut() = raw_ip;
+                        *osa.sa6.u.sin6_scope_id_mut() = addr.scope_id();
+                    }
+                    osa
+                };
             }
         }
     }
@@ -373,8 +426,11 @@ mod tests {
     use super::*;
     use std::net::SocketAddrV6;
 
-    #[cfg(target_family = "unix")]
+    #[cfg(not(target_os = "windows"))]
     use libc::{in6_addr, in_addr};
+
+    #[cfg(target_os = "windows")]
+    use winapi::shared::{in6addr::in6_addr, inaddr::in_addr};
 
     fn check_as_mut(osa: &mut OsSocketAddr) {
         let ptr = osa as *mut _ as usize;
@@ -411,14 +467,36 @@ mod tests {
     fn os_socketaddr_ipv4() {
         let addr: SocketAddr = "12.34.56.78:4242".parse().unwrap();
         unsafe {
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(
+                    target_os = "android",
+                    target_os = "emscripten",
+                    target_os = "fuchsia",
+                    target_os = "illumos",
+                    target_os = "l4re",
+                    target_os = "linux",
+                    target_os = "redox",
+                    target_os = "solaris",
+
+                    target_os = "windows",
+                    ))]
             let sa = sockaddr_in {
                 sin_family: AF_INET as u16,
                 sin_addr: *(&[12u8, 34, 56, 78] as *const _ as *const in_addr),
                 sin_port: 4242u16.to_be(),
                 sin_zero: std::mem::zeroed(),
             };
-            #[cfg(target_os = "macos")]
+            #[cfg(any(
+                    target_os = "dragonfly",
+                    target_os = "freebsd",
+                    target_os = "haiku",
+                    target_os = "hermit",
+                    target_os = "ios",
+                    target_os = "macos",
+                    target_os = "netbsd",
+                    target_os = "openbsd",
+                    target_os = "vxworks",
+                    target_os = "watchos",
+                    ))]
             let sa = sockaddr_in {
                 sin_len: std::mem::size_of::<sockaddr_in>() as u8,
                 sin_family: AF_INET as u8,
@@ -451,7 +529,16 @@ mod tests {
         ];
         let addr = SocketAddr::V6(SocketAddrV6::new(ip.into(), 4242, 0x11223344, 0x55667788));
         unsafe {
-            #[cfg(all(target_family = "unix", not(target_os = "macos")))]
+            #[cfg(any(
+                    target_os = "android",
+                    target_os = "emscripten",
+                    target_os = "fuchsia",
+                    target_os = "illumos",
+                    target_os = "l4re",
+                    target_os = "linux",
+                    target_os = "redox",
+                    target_os = "solaris",
+                    ))]
             let sa = sockaddr_in6 {
                 sin6_family: AF_INET6 as u16,
                 sin6_addr: *(&ip as *const _ as *const in6_addr),
@@ -459,7 +546,18 @@ mod tests {
                 sin6_flowinfo: 0x11223344,
                 sin6_scope_id: 0x55667788,
             };
-            #[cfg(all(target_family = "unix", target_os = "macos"))]
+            #[cfg(any(
+                    target_os = "dragonfly",
+                    target_os = "freebsd",
+                    target_os = "haiku",
+                    target_os = "hermit",
+                    target_os = "ios",
+                    target_os = "macos",
+                    target_os = "netbsd",
+                    target_os = "openbsd",
+                    target_os = "vxworks",
+                    target_os = "watchos",
+                    ))]
             let sa = sockaddr_in6 {
                 sin6_len: std::mem::size_of::<sockaddr_in6>() as u8,
                 sin6_family: AF_INET6 as u8,
@@ -468,7 +566,7 @@ mod tests {
                 sin6_flowinfo: 0x11223344,
                 sin6_scope_id: 0x55667788,
             };
-            #[cfg(target_family = "windows")]
+            #[cfg(target_os = "windows")]
             let mut sa = sockaddr_in6 {
                 sin6_family: AF_INET6 as u16,
                 sin6_addr: *(&ip as *const _ as *const in6_addr),
@@ -476,7 +574,7 @@ mod tests {
                 sin6_flowinfo: 0x11223344,
                 u: std::mem::zeroed(),
             };
-            #[cfg(target_family = "windows")]
+            #[cfg(target_os = "windows")]
             let sa = {
                 let scope_id = sa.u.sin6_scope_id_mut();
                 *scope_id = 0x55667788;

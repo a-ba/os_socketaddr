@@ -21,6 +21,15 @@ layout.
 This crate provides `OsSocketAddr` which holds a `libc::sockaddr` (containing an IPv4 or IPv6
 address) and the conversion functions from/into `SocketAddr`.
 
+## OS support `#[cfg(target_os="xxxxxx")]`
+
+`linux`, `macos` and `windows` are officially supported and
+[actively tested](https://github.com/a-ba/os_socketaddr/actions).
+
+`android`, `dragonfly`, `emscripten`, `freebsd`, `fuchsia`, `haiku`, `hermit`, `illumos`, `ios`,
+`l4re`, `netbsd`, `openbsd`, `redox`, `solaris`, `vxworks` and `watchos` should work but are not
+tested.
+
 ## Example
 
 ```rust
