@@ -20,7 +20,11 @@ convert `SocketAddr` from/into a `libc::sockaddr` because `SocketAddr` has a dif
 layout.
 
 This crate provides `OsSocketAddr` which holds a `libc::sockaddr` (containing an IPv4 or IPv6
-address) and the conversion functions from/into `SocketAddr`.
+address) and the conversion functions:
+
+  - from/into `SocketAddr`
+  - from `(*const sockaddr, socklen_t)`
+  - into `(*mut sockaddr, *mut socklen_t)`
 
 ## Supported targets   `#[cfg(target_os="xxxxxx")]`
 

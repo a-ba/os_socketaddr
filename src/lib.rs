@@ -9,8 +9,11 @@
 
 //!
 //! This crate provides [OsSocketAddr] which holds a `libc::sockaddr` (containing an IPv4 or IPv6
-//! address) and the conversion functions from/into `SocketAddr`.
+//! address) and the conversion functions:
 //!
+//!   - from/into `SocketAddr`
+//!   - from `(*const sockaddr, socklen_t)`
+//!   - into `(*mut sockaddr, *mut socklen_t)`
 //!
 //! # Example
 //!
@@ -19,11 +22,20 @@
 //! extern crate libc;
 //! extern crate os_socketaddr;
 //!
-//! use std::net::SocketAddr;
-//! use self::libc::{c_int, c_void, size_t, ssize_t};
+//! use std::net::{SocketAddr,UdpSocket};
+//! use self::libc::{c_int, c_void, size_t, ssize_t, sockaddr};
+//! #[cfg(target_family = "unix")]
+//! use libc::socklen_t;
+//! #[cfg(target_family = "windows")]
+//! use winapi::um::ws2tcpip::socklen_t;
+//!
 //! use self::os_socketaddr::OsSocketAddr;
 //!
 //! ////////// unix examples //////////
+//!
+//! //
+//! // calling C functions from Rust
+//! //
 //!
 //! #[cfg(target_family = "unix")]
 //! fn sendto(socket: c_int, payload: &[u8], dst: SocketAddr) -> ssize_t
@@ -47,7 +59,49 @@
 //!     (nb, addr.into())
 //! }
 //!
+//! //
+//! // calling Rust functions from C
+//! //
+//!
+//! #[cfg(target_family = "unix")]
+//! #[no_mangle]
+//! pub unsafe extern "C" fn send_to(
+//!         sock: *const UdpSocket, buf: *const u8, buflen: size_t,
+//!         addr: *const sockaddr, addrlen: socklen_t) -> ssize_t
+//! {
+//! 
+//!     let Some(dst) = OsSocketAddr::copy_from_raw(addr, addrlen).into_addr() else {
+//!         // not an IPv4/IPv6 address
+//!         return -1;
+//!     };
+//!     let slice = std::slice::from_raw_parts(buf, buflen);
+//!     match (*sock).send_to(&slice, dst) {
+//!         Ok(nb) => nb as ssize_t,
+//!         Err(_) => -1,
+//!     }
+//! }
+//!
+//! #[cfg(target_family = "unix")]
+//! #[no_mangle]
+//! pub unsafe extern "C" fn recv_from(
+//!         sock: *const UdpSocket, buf: *mut u8, buflen: size_t,
+//!         addr: *mut sockaddr, addrlen: *mut socklen_t) -> ssize_t
+//! {
+//!     let slice = std::slice::from_raw_parts_mut(buf, buflen);
+//!     match (*sock).recv_from(slice) {
+//!         Ok((nb, src)) => {
+//!             OsSocketAddr::from(src).copy_to_raw(addr, addrlen);
+//!             nb as ssize_t
+//!         },
+//!         Err(_) => -1,
+//!     }
+//! }
+//!
 //! ////////// windows examples //////////
+//!
+//! //
+//! // calling C functions from Rust
+//! //
 //!
 //! #[cfg(target_family = "windows")]
 //! fn sendto(socket: winapi::um::winsock2::SOCKET,
@@ -111,7 +165,11 @@ use winapi::{
 /// struct. Its content can be arbitrary written using [.as_mut()](Self::as_mut) or
 /// [.as_mut_ptr()](Self::as_mut_ptr).
 ///
-/// It also provides the conversion functions from/into [SocketAddr].
+/// It also provides the conversion functions:
+///
+///   - from/into `SocketAddr`
+///   - from `(*const sockaddr, socklen_t)`
+///   - into `(*mut sockaddr, *mut socklen_t)`
 ///
 /// See [crate] level documentation.
 ///
@@ -124,24 +182,71 @@ pub union OsSocketAddr {
 
 #[allow(dead_code)]
 impl OsSocketAddr {
-    /// Create a new empty socket address
+    /// Create a new empty socket address (all bytes initialised to 0)
     pub fn new() -> Self {
         OsSocketAddr {
             sa6: unsafe { std::mem::zeroed() },
         }
     }
 
+    /// Create a new socket address from a raw byte slice
+    ///
+    /// The location pointed by `ptr` is assumed to hold a `struct sockaddr` whose length in bytes
+    /// is given by `len`.
+    ///
+    /// Its content is copied into a new [OsSocketAddr] object. If `len` is greater than the size
+    /// of [sockaddr_in6] then the resulting address is truncated. If less, then the extra bytes
+    /// are zeroed.
+    ///
+    /// If `ptr` is NULL, then the resulting address is zeroed.
+    ///
+    /// See also [OsSocketAddr::copy_to_raw]
+    pub unsafe fn copy_from_raw(ptr: *const sockaddr, len: socklen_t) -> Self {
+        let mut addr = OsSocketAddr::new();
+        if !ptr.is_null() {
+            let src = std::slice::from_raw_parts(ptr as *const u8, len as usize);
+            let dst = addr.as_mut();
+            let nb = src.len().min(dst.len());
+            dst[..nb].copy_from_slice(&src[..nb]);
+        }
+        addr
+    }
+
     /// Create a new socket address from a raw slice
-    ///
-    /// # Panics
-    ///
-    /// Panics if `len` is bigger that the size of [sockaddr_in6]
-    ///
+    #[deprecated(since="0.2.4", note="use copy_from_raw()")]
     pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
-        let mut raw = OsSocketAddr::new();
-        assert!(len <= std::mem::size_of_val(&raw.sa6));
-        raw.as_mut()[..len].copy_from_slice(std::slice::from_raw_parts(ptr, len));
-        raw
+        Self::copy_from_raw(ptr as *const sockaddr, len as socklen_t)
+    }
+
+
+    /// Copy the socket address into a raw byte slice
+    ///
+    /// The value pointed by `len` must be initialised with the length in bytes of the buffer
+    /// pointed by `ptr`. On return it contains the actual size of the returned address.
+    ///
+    /// If the provided buffer is too small, then the returned address is truncated (and `len` will
+    /// have a greater value than before the call).
+    ///
+    /// If `ptr` is NULL then the function does nothing.
+    ///
+    /// If the value of .sa_family does not resolve to AF_INET or AF_INET6 then the function
+    /// sets `*len` to 0 and returns an error.
+    /// 
+    /// See also [OsSocketAddr::copy_from_raw]
+    pub unsafe fn copy_to_raw(&self, ptr: *mut sockaddr, len: *mut socklen_t) -> Result<(), BadFamilyError>
+    {
+        if !ptr.is_null() {
+            let src = self.as_ref();
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut u8, *len as usize);
+            if src.len() == 0 {
+                *len = 0;
+                return Err(BadFamilyError(self.sa4.sin_family as i32))
+            }
+            let nb = src.len().min(dst.len());
+            dst[..nb].copy_from_slice(&src[..nb]);
+            *len = src.len() as socklen_t
+        }
+        Ok(())
     }
 
     /// Create a new socket address from a [SocketAddr] object
@@ -425,6 +530,83 @@ mod tests {
     }
 
     #[test]
+    fn convert_from_and_to_raw() {
+        let osa4 : OsSocketAddr = "12.34.56.78:12345".parse().unwrap();
+        let osa6 : OsSocketAddr = "[0123:4567:89ab:cdef:fedc:ba98:7654:3210]:12345"
+            .parse().unwrap();
+        const LEN4 : usize = std::mem::size_of::<sockaddr_in>();
+        const LEN6 : usize = std::mem::size_of::<sockaddr_in6>();
+
+        fn with_buf<F>(len: usize, f: F)
+            where F: Fn(&mut [u8], *mut sockaddr, *mut socklen_t)
+        {
+            let mut buf = Vec::new();
+            buf.resize(len, 0xff);
+            let sa = buf.as_mut_ptr() as *mut sockaddr;
+            let mut sa_len = len as socklen_t;
+            f(&mut buf, sa , &mut sa_len as *mut socklen_t);
+        }
+        // ipv4
+        with_buf(128, |buf, sa, sa_len| unsafe {
+            osa4.copy_to_raw(sa, sa_len).unwrap();
+
+            assert_eq!(*sa_len as usize, LEN4);
+            assert_eq!(&buf[..LEN4], osa4.as_ref());
+            assert!(buf[LEN4..].iter().all(|v| *v==0xff));
+
+            let mut osa4_bis = OsSocketAddr::copy_from_raw(sa, *sa_len);
+            assert_eq!(osa4.into_addr(), osa4_bis.into_addr());
+            assert_eq!(&osa4_bis.as_ref()[..LEN4], &buf[..LEN4]);
+            assert!(osa4_bis.as_mut()[LEN4..].iter().all(|v| *v==0x0));
+
+            let mut osa4_ter = OsSocketAddr::copy_from_raw(sa, 128);
+            assert_eq!(osa4.into_addr(), osa4_ter.into_addr());
+            assert_eq!(&osa4_ter.as_ref()[..LEN4], &buf[..LEN4]);
+            assert!(osa4_ter.as_mut()[LEN4..].iter().all(|v| *v==0xff));
+        });
+        // ipv6
+        with_buf(128, |buf, sa, sa_len| unsafe {
+            osa6.copy_to_raw(sa, sa_len).unwrap();
+
+            assert_eq!(*sa_len as usize, LEN6);
+            assert_eq!(&buf[..LEN6], osa6.as_ref());
+            assert!(buf[LEN6..].iter().all(|v| *v==0xff));
+
+            let mut osa6_bis = OsSocketAddr::copy_from_raw(sa, *sa_len);
+            assert_eq!(osa6.into_addr(), osa6_bis.into_addr());
+            assert_eq!(osa6_bis.as_ref(), &buf[..LEN6]);
+            assert_eq!(osa6_bis.as_mut(), &buf[..LEN6]);
+        });
+        // copy to smaller buffer (must truncate)
+        with_buf(128, |buf, sa, sa_len| unsafe {
+            let limit = 6;
+
+            *sa_len = limit as socklen_t;
+            osa4.copy_to_raw(sa, sa_len).unwrap();
+            assert_eq!(*sa_len as usize, LEN4);
+            assert_eq!(&buf[..limit], &osa4.as_ref()[..limit]);
+            assert!(buf[limit..].iter().all(|v| *v==0xff));
+
+            buf.fill(0xff);
+            *sa_len = limit as socklen_t;
+            osa6.copy_to_raw(sa, sa_len).unwrap();
+            assert_eq!(*sa_len as usize, LEN6);
+            assert_eq!(&buf[..limit], &osa6.as_ref()[..limit]);
+            assert!(buf[limit..].iter().all(|v| *v==0xff));
+        });
+        // copy unknown sin_addr
+        with_buf(128, |_, sa, sa_len| unsafe {
+            assert_eq!(OsSocketAddr::new().copy_to_raw(sa, sa_len), Err(BadFamilyError(0)));
+            assert_eq!(*sa_len, 0);
+        });
+        // null pointers
+        unsafe { osa4.copy_to_raw(std::ptr::null_mut(), std::ptr::null_mut()).unwrap(); }
+
+        let mut null = unsafe { OsSocketAddr::copy_from_raw(std::ptr::null(), 456) };
+        assert_eq!(null.as_mut(), OsSocketAddr::new().as_mut());
+    }
+
+    #[test]
     fn os_socketaddr_ipv4() {
         let addr: SocketAddr = "12.34.56.78:4242".parse().unwrap();
         unsafe {
@@ -465,9 +647,9 @@ mod tests {
                 sin_port: 4242u16.to_be(),
                 sin_zero: std::mem::zeroed(),
             };
-            let mut osa = OsSocketAddr::from_raw_parts(
-                &sa as *const _ as *const u8,
-                std::mem::size_of_val(&sa),
+            let mut osa = OsSocketAddr::copy_from_raw(
+                &sa as *const _ as *const sockaddr,
+                std::mem::size_of_val(&sa) as socklen_t,
             );
             assert_eq!(osa.len() as usize, std::mem::size_of::<sockaddr_in>());
             assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
@@ -542,9 +724,9 @@ mod tests {
                 sa
             };
 
-            let mut osa = OsSocketAddr::from_raw_parts(
-                &sa as *const _ as *const u8,
-                std::mem::size_of_val(&sa),
+            let mut osa = OsSocketAddr::copy_from_raw(
+                &sa as *const _ as *const sockaddr,
+                std::mem::size_of_val(&sa) as socklen_t,
             );
             assert_eq!(osa.len() as usize, std::mem::size_of::<sockaddr_in6>());
             assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
@@ -579,8 +761,8 @@ mod tests {
         check(OsSocketAddr::new());
         check(None.into());
         unsafe {
-            check(OsSocketAddr::from_raw_parts(
-                [0xde, 0xad, 0xbe, 0xef].as_ptr(),
+            check(OsSocketAddr::copy_from_raw(
+                [0xde, 0xad, 0xbe, 0xef].as_ptr() as *const sockaddr,
                 4,
             ));
         }
