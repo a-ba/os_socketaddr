@@ -91,6 +91,7 @@ extern crate libc;
 
 use std::convert::TryInto;
 use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr,SocketAddrV4,SocketAddrV6};
+use std::str::FromStr;
 
 #[cfg(not(target_os = "windows"))]
 use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6};
@@ -364,6 +365,14 @@ impl From<Option<SocketAddr>> for OsSocketAddr {
             None => Self::new(),
             Some(addr) => addr.into(),
         }
+    }
+}
+
+impl FromStr for OsSocketAddr {
+    type Err = std::net::AddrParseError;
+    fn from_str(val: &str) -> Result<Self,Self::Err> {
+        let addr : SocketAddr = val.parse()?;
+        Ok(addr.into())
     }
 }
 
