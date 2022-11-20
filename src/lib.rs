@@ -93,7 +93,7 @@ use std::convert::TryInto;
 use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr,SocketAddrV4,SocketAddrV6};
 
 #[cfg(not(target_os = "windows"))]
-use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6, in_addr, in6_addr};
+use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t, AF_INET, AF_INET6};
 
 #[cfg(target_os = "windows")]
 use winapi::{
@@ -284,26 +284,10 @@ impl std::fmt::Display for BadFamilyError {
 
 impl From<SocketAddr> for OsSocketAddr {
     fn from(addr: SocketAddr) -> Self {
+        let mut result : Self = unsafe { std::mem::zeroed() };
         match addr {
             SocketAddr::V4(addr) => {
-                let raw_ip = u32::to_be((*addr.ip()).into());
-
-                #[cfg(any(
-                        target_os = "android",
-                        target_os = "emscripten",
-                        target_os = "fuchsia",
-                        target_os = "illumos",
-                        target_os = "l4re",
-                        target_os = "linux",
-                        target_os = "redox",
-                        target_os = "solaris",
-                        ))]
-                return Self{ sa4: sockaddr_in{
-                    sin_family: AF_INET as u16,
-                    sin_port: u16::to_be(addr.port()),
-                    sin_addr: in_addr{ s_addr: raw_ip },
-                    sin_zero: Default::default(),
-                }};
+                let sa4 = unsafe { &mut result.sa4 };
 
                 #[cfg(any(
                         target_os = "dragonfly",
@@ -317,48 +301,25 @@ impl From<SocketAddr> for OsSocketAddr {
                         target_os = "vxworks",
                         target_os = "watchos",
                         ))]
-                return Self{ sa4: sockaddr_in {
-                    sin_len: std::mem::size_of::<sockaddr_in>() as u8,
-                    sin_family: AF_INET as u8,
-                    sin_port: u16::to_be(addr.port()),
-                    sin_addr: in_addr{ s_addr: raw_ip },
-                    sin_zero: Default::default(),
-                }};
+                {
+                    sa4.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
+                }
 
+                sa4.sin_family = AF_INET.try_into().unwrap();
+                sa4.sin_port = u16::to_be(addr.port());
+
+                let raw_ip = u32::to_be((*addr.ip()).into());
+                #[cfg(not(target_os = "windows"))]
+                {
+                    sa4.sin_addr.s_addr = raw_ip;
+                }
                 #[cfg(target_os = "windows")]
-                return {
-                    let mut osa = Self{ sa4: sockaddr_in{
-                        sin_family: AF_INET as u16,
-                        sin_port: u16::to_be(addr.port()),
-                        sin_addr: unsafe { std::mem::zeroed() },
-                        sin_zero: Default::default(),
-                    }};
-                    unsafe { *osa.sa4.sin_addr.S_un.S_addr_mut() = raw_ip; }
-                    osa
-                };
+                unsafe {
+                    *sa4.sin_addr.S_un.S_addr_mut() = raw_ip;
+                }
             },
             SocketAddr::V6(addr) => {
-                let raw_ip = u128::to_be_bytes((*addr.ip()).into());
-
-                #[cfg(any(
-                        target_os = "android",
-                        target_os = "emscripten",
-                        target_os = "fuchsia",
-                        target_os = "illumos",
-                        target_os = "l4re",
-                        target_os = "linux",
-                        target_os = "redox",
-                        target_os = "solaris",
-                        ))]
-                return Self{ sa6: sockaddr_in6{
-                    sin6_family: AF_INET6 as u16,
-                    sin6_port: u16::to_be(addr.port()),
-                    sin6_flowinfo: addr.flowinfo(),
-                    sin6_addr: in6_addr{ s6_addr: raw_ip },
-                    sin6_scope_id: addr.scope_id(),
-                    #[cfg(any(target_os = "solaris", target_os = "illumos"))]
-                    __sin6_src_id: 0,
-                }};
+                let sa6 = unsafe { &mut result.sa6 };
 
                 #[cfg(any(
                         target_os = "dragonfly",
@@ -372,32 +333,28 @@ impl From<SocketAddr> for OsSocketAddr {
                         target_os = "vxworks",
                         target_os = "watchos",
                         ))]
-                return Self{ sa6: sockaddr_in6{
-                    sin6_len: std::mem::size_of::<sockaddr_in6>() as u8,
-                    sin6_family: AF_INET6 as u8,
-                    sin6_port: u16::to_be(addr.port()),
-                    sin6_flowinfo: addr.flowinfo(),
-                    sin6_addr: in6_addr{ s6_addr: raw_ip },
-                    sin6_scope_id: addr.scope_id(),
-                }};
+                {
+                    sa6.sin6_len = std::mem::size_of::<sockaddr_in6>() as u8;
+                }
 
+                sa6.sin6_family = AF_INET6.try_into().unwrap();
+                sa6.sin6_port = u16::to_be(addr.port());
+                sa6.sin6_flowinfo = addr.flowinfo();
+
+                let raw_ip = u128::to_be_bytes((*addr.ip()).into());
+                #[cfg(not(target_os = "windows"))]
+                {
+                    sa6.sin6_addr.s6_addr = raw_ip;
+                    sa6.sin6_scope_id = addr.scope_id();
+                }
                 #[cfg(target_os = "windows")]
-                return {
-                    let mut osa = Self{ sa6: sockaddr_in6{
-                        sin6_family: AF_INET6 as u16,
-                        sin6_port: u16::to_be(addr.port()),
-                        sin6_flowinfo: addr.flowinfo(),
-                        sin6_addr: unsafe { std::mem::zeroed() },
-                        u:         unsafe { std::mem::zeroed() },
-                    }};
-                    unsafe {
-                        *osa.sa6.sin6_addr.u.Byte_mut() = raw_ip;
-                        *osa.sa6.u.sin6_scope_id_mut() = addr.scope_id();
-                    }
-                    osa
-                };
+                unsafe {
+                    *sa6.sin6_addr.u.Byte_mut() = raw_ip;
+                    *sa6.u.sin6_scope_id_mut() = addr.scope_id();
+                }
             }
         }
+        result
     }
 }
 
