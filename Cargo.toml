@@ -1,9 +1,9 @@
 [package]
 name = "os_socketaddr"
-version = "0.2.3"
+version = "0.2.4"
 description = "A type for handling platform-native socket addresses (struct sockaddr)"
 keywords = ["sockaddr", "libc", "socket"]
-categories = ["network-programming", "os::unix-apis", "api-bindings"]
+categories = ["network-programming", "os", "api-bindings"]
 license = "MIT OR Apache-2.0"
 authors = ["Anthony Baire <ayba@free.fr>"]
 repository = "https://github.com/a-ba/os_socketaddr"
