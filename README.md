@@ -26,7 +26,13 @@ address) and the conversion functions:
   - from `(*const sockaddr, SockLen)`
   - into `(*mut sockaddr, *mut Socklen)`
 
-where `SockLen` may be any of `i32`, `u32`, `i64`, `u64`, `isize` or `usize`.
+where:
+ 
+  - `SockAddr` may be any of:
+    - `libc::{sockaddr, sockaddr_in, sockaddr_in6}`
+    - `winapi::shared::ws2def::{SOCKADDR, SOCKADDR_IN}`
+    - `winapi::shared::ws2ipdef::{SOCKADDR_INET, SOCKADDR_IN6_LH}`
+  - `SockLen` may be any of `i32`, `u32`, `i64`, `u64`, `isize` or `usize`.
 
 ## Supported targets   `#[cfg(target_os="xxxxxx")]`
 

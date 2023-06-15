@@ -12,10 +12,15 @@
 //! address) and the conversion functions:
 //!
 //!   - from/into `SocketAddr`
-//!   - from `(*const sockaddr, SockLen)`
-//!   - into `(*mut sockaddr, *mut SockLen)`
+//!   - from `(*const SockAddr, SockLen)`
+//!   - into `(*mut SockAddr, *mut SockLen)`
 //!
-//! where [SockLen] may be any of [i32], [u32], [i64], [u64], [isize] or [usize].
+//! where:
+//!   - [SockAddr] may be any of:
+//!     - `libc::{sockaddr, sockaddr_in, sockaddr_in6}`
+//!     - `winapi::shared::ws2def::{SOCKADDR, SOCKADDR_IN}`
+//!     - `winapi::shared::ws2ipdef::{SOCKADDR_INET, SOCKADDR_IN6_LH}`
+//!   - [SockLen] may be any of [i32], [u32], [i64], [u64], [isize] or [usize].
 //!
 //!
 //! # Example
@@ -28,32 +33,33 @@
 //! use std::net::{SocketAddr,UdpSocket};
 //! use self::libc::{c_int, c_void, size_t, ssize_t, sockaddr};
 //!
-//! use self::os_socketaddr::OsSocketAddr;
+//! use self::os_socketaddr::{OsSocketAddr, socklen_t};
 //!
-//! ////////// unix examples //////////
+//! #[cfg(target_family = "windows")]
+//! use libc::SOCKET;
+//! #[cfg(not(target_family = "windows"))]
+//! type SOCKET = c_int;
 //!
 //! //
 //! // calling C functions from Rust
 //! //
 //!
-//! #[cfg(target_family = "unix")]
-//! fn sendto(socket: c_int, payload: &[u8], dst: SocketAddr) -> ssize_t
+//! fn sendto(socket: SOCKET, payload: &[u8], dst: SocketAddr) -> ssize_t
 //! {
 //!     let addr : OsSocketAddr = dst.into();
 //!     unsafe {
-//!         libc::sendto(socket, payload.as_ptr() as *const c_void, payload.len(), 0,
-//!                      addr.as_ptr(), addr.len())
+//!         libc::sendto(socket, payload.as_ptr() as *const _, payload.len() as _, 0,
+//!                      addr.as_ptr(), addr.len()) as ssize_t
 //!     }
 //! }
 //!
-//! #[cfg(target_family = "unix")]
-//! fn recvfrom(socket: c_int, payload: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
+//! fn recvfrom(socket: SOCKET, payload: &mut[u8]) -> (ssize_t, Option<SocketAddr>)
 //! {
 //!     let mut addr = OsSocketAddr::new();
 //!     let mut addrlen = addr.capacity();
 //!     let nb = unsafe {
-//!         libc::recvfrom(socket, payload.as_mut_ptr() as *mut c_void, payload.len(), 0,
-//!                        addr.as_mut_ptr(), &mut addrlen as *mut _)
+//!         libc::recvfrom(socket, payload.as_mut_ptr() as *mut _, payload.len() as _, 0,
+//!                        addr.as_mut_ptr(), &mut addrlen as *mut _) as ssize_t
 //!     };
 //!     (nb, addr.into())
 //! }
@@ -62,11 +68,10 @@
 //! // calling Rust functions from C
 //! //
 //!
-//! #[cfg(target_family = "unix")]
 //! #[no_mangle]
 //! pub unsafe extern "C" fn send_to(
 //!         sock: *const UdpSocket, buf: *const u8, buflen: size_t,
-//!         addr: *const sockaddr, addrlen: size_t) -> ssize_t
+//!         addr: *const sockaddr, addrlen: socklen_t) -> ssize_t
 //! {
 //! 
 //!     let Some(dst) = OsSocketAddr::copy_from_raw(addr, addrlen).into_addr() else {
@@ -80,11 +85,10 @@
 //!     }
 //! }
 //!
-//! #[cfg(target_family = "unix")]
 //! #[no_mangle]
 //! pub unsafe extern "C" fn recv_from(
 //!         sock: *const UdpSocket, buf: *mut u8, buflen: size_t,
-//!         addr: *mut sockaddr, addrlen: *mut size_t) -> ssize_t
+//!         addr: *mut sockaddr, addrlen: *mut socklen_t) -> ssize_t
 //! {
 //!     let slice = std::slice::from_raw_parts_mut(buf, buflen);
 //!     match (*sock).recv_from(slice) {
@@ -93,47 +97,6 @@
 //!             nb as ssize_t
 //!         },
 //!         Err(_) => -1,
-//!     }
-//! }
-//!
-//! ////////// windows examples //////////
-//!
-//! //
-//! // calling C functions from Rust
-//! //
-//!
-//! #[cfg(target_family = "windows")]
-//! fn sendto(socket: winapi::um::winsock2::SOCKET,
-//!           payload: &mut winapi::shared::ws2def::WSABUF,
-//!           dst: SocketAddr) -> ssize_t
-//! {
-//!     let addr : OsSocketAddr = dst.into();
-//!     let mut nb : u32 = 0;
-//!     match unsafe {
-//!         winapi::um::winsock2::WSASendTo(socket, payload, 1u32, &mut nb, 0u32,
-//!                                         addr.as_ptr(), addr.len(),
-//!                                         std::ptr::null_mut::<winapi::um::minwinbase::OVERLAPPED>(), None)
-//!     } {
-//!         0 => nb as ssize_t,
-//!         _ => -1,
-//!     }
-//! }
-//!
-//! #[cfg(target_family = "windows")]
-//! fn recvfrom(socket: winapi::um::winsock2::SOCKET,
-//!             payload: &mut winapi::shared::ws2def::WSABUF) -> (ssize_t, Option<SocketAddr>)
-//! {
-//!     let mut addr = OsSocketAddr::new();
-//!     let mut addrlen = addr.capacity();
-//!     let mut nb : u32 = 0;
-//!     let mut flags : u32 = 0;
-//!     match unsafe {
-//!         winapi::um::winsock2::WSARecvFrom(socket, payload, 1u32, &mut nb, &mut flags,
-//!                                           addr.as_mut_ptr(), &mut addrlen as *mut _,
-//!                                           std::ptr::null_mut::<winapi::um::minwinbase::OVERLAPPED>(), None)
-//!     } {
-//!         0 => (nb as ssize_t, addr.into()),
-//!         _ => (-1, None),
 //!     }
 //! }
 //! # }
@@ -157,18 +120,6 @@ use winapi::shared::{
 
 /// A type for handling platform-native socket addresses (`struct sockaddr`)
 ///
-/// This type has a buffer big enough to hold a [libc::sockaddr_in] or [libc::sockaddr_in6]
-/// struct. Its content can be arbitrary written using [.as_mut()](Self::as_mut) or
-/// [.as_mut_ptr()](Self::as_mut_ptr).
-///
-/// It also provides the conversion functions:
-///
-///   - from/into `SocketAddr`
-///   - from `(*const sockaddr, SockLen)`
-///   - into `(*mut sockaddr, *mut SockLen)`
-///
-/// where [SockLen] may be any of [i32], [u32], [i64], [u64], [isize] or [usize].
-///
 /// See [crate] level documentation.
 ///
 #[derive(Copy, Clone)]
@@ -191,7 +142,38 @@ pub use libc::socklen_t;
 pub use winapi::um::ws2tcpip::socklen_t;
 
 
-/// Trait used for representing the socket address length in any 32 or 64 bit format.
+/// Trait for working with any definition of `struct sockaddr`.
+///
+/// Implemented for:
+///   - `libc::{sockaddr, sockaddr_in, sockaddr_in6}`
+///   - `winapi::shared::ws2def::{SOCKADDR, SOCKADDR_IN}` (windows only)
+///   - `winapi::shared::ws2ipdef::{SOCKADDR_INET, SOCKADDR_IN6_LH}` (windows only)
+pub trait SockAddr {
+    const HAS_IPV4 : bool = true;
+    const HAS_IPV6 : bool = true;
+}
+
+impl SockAddr for libc::sockaddr {}
+
+#[cfg(not(target_os = "windows"))]
+impl SockAddr for libc::sockaddr_in     { const HAS_IPV6 : bool = false; }
+
+#[cfg(not(target_os = "windows"))]
+impl SockAddr for libc::sockaddr_in6    { const HAS_IPV4 : bool = false; }
+
+#[cfg(target_os = "windows")]
+impl SockAddr for winapi::shared::ws2def::SOCKADDR {}
+
+#[cfg(target_os = "windows")]
+impl SockAddr for winapi::shared::ws2ipdef::SOCKADDR_INET {}
+
+#[cfg(target_os = "windows")]
+impl SockAddr for winapi::shared::ws2def::SOCKADDR_IN { const HAS_IPV6 : bool = false; }
+
+#[cfg(target_os = "windows")]
+impl SockAddr for winapi::shared::ws2ipdef::SOCKADDR_IN6_LH { const HAS_IPV4 : bool = false; }
+
+/// Trait for working with the socket address length in any 32 or 64 bit format.
 pub trait SockLen : TryFrom<usize> + TryInto<usize> + Copy + Default {}
 impl SockLen for i32 {}
 impl SockLen for u32 {}
@@ -224,7 +206,8 @@ impl OsSocketAddr {
     /// If `ptr` is NULL, then the resulting address is zeroed.
     ///
     /// See also [OsSocketAddr::copy_to_raw]
-    pub unsafe fn copy_from_raw<L: SockLen>(ptr: *const sockaddr, len: L) -> Self {
+    pub unsafe fn copy_from_raw<A: SockAddr, L: SockLen>(ptr: *const A, len: L) -> Self
+    {
         let mut addr = OsSocketAddr::new();
         if !ptr.is_null() {
             len.try_into().map(|ulen| {
@@ -256,20 +239,20 @@ impl OsSocketAddr {
     ///
     /// If `ptr` is NULL then the function does nothing.
     ///
-    /// If the value of .sa_family does not resolve to AF_INET or AF_INET6 then the function
-    /// sets `*len` to 0 and returns an error.
+    /// If the value of .sa_family is not compatible with then address type `A`, then 
+    /// the function sets `*len` to 0 and returns an error.
     /// 
     /// See also [OsSocketAddr::copy_from_raw]
-    pub unsafe fn copy_to_raw<L>(&self, ptr: *mut sockaddr, len: *mut L) -> Result<(), BadFamilyError>
-        where L: SockLen
+    pub unsafe fn copy_to_raw<A, L>(&self, ptr: *mut A, len: *mut L) -> Result<(), BadFamilyError>
+        where A: SockAddr, L: SockLen
     {
         if !ptr.is_null() {
             let src = self.as_ref();
             let dst = std::slice::from_raw_parts_mut(ptr as *mut u8,
                                                      (*len).try_into().unwrap_or_default());
-            if src.len() == 0 {
+            if let Err(e) = self.as_ptr_checked::<A>() {
                 *len = L::default();
-                return Err(BadFamilyError(self.sa4.sin_family as i32))
+                return Err(e);
             }
             let nb = src.len().min(dst.len());
             dst[..nb].copy_from_slice(&src[..nb]);
@@ -314,12 +297,43 @@ impl OsSocketAddr {
     }
 
     /// Get a pointer to the internal buffer
-    pub fn as_ptr(&self) -> *const sockaddr {
+    ///
+    /// Note: the pointer is cast regardless the content of the buffer,
+    /// (eg: calling `.as_ptr::<sockaddr_in>()` is valid even if the buffer contains an IPv6
+    /// address). Use [OsSocketAddr::as_ptr_checked()] if you need to ensure that the buffer
+    /// contains a valid address for the requested pointer type.
+    pub fn as_ptr<A: SockAddr>(&self) -> *const A {
         unsafe { &self.sa6 as *const _ as *const _ }
     }
 
+    /// Get a pointer to the internal buffer after having checked the address family
+    ///
+    /// The function returns an error if the content of the buffer is not compatible with the
+    /// requested type (eg: calling `.as_ptr::<sockaddr_in>()` on a buffer holding an IPv6
+    /// address).
+    ///
+    pub fn as_ptr_checked<A: SockAddr>(&self) -> Result<*const A, BadFamilyError> {
+        match unsafe { self.sa4.sin_family.into() }
+        {
+            AF_INET  if A::HAS_IPV4 => Ok(self.as_ptr()),
+            AF_INET6 if A::HAS_IPV6 => Ok(self.as_ptr()),
+            family => Err(BadFamilyError(family))
+        }
+
+    }
+
     /// Get a mutable pointer to the internal buffer
-    pub fn as_mut_ptr(&mut self) -> *mut sockaddr {
+    pub fn as_mut_ptr<A: SockAddr>(&mut self) -> *mut A {
+        unsafe { &mut self.sa6 as *mut _ as *mut _ }
+    }
+
+    /// Get a void pointer to the internal buffer
+    pub fn as_void_ptr(&self) -> *const libc::c_void {
+        unsafe { &self.sa6 as *const _ as *const _ }
+    }
+
+    /// Get a void mutable pointer to the internal buffer
+    pub fn as_void_mut_ptr(&mut self) -> *mut libc::c_void {
         unsafe { &mut self.sa6 as *mut _ as *mut _ }
     }
 }
@@ -540,8 +554,8 @@ mod tests {
     #[test]
     fn ptr_and_capacity() {
         let mut osa = OsSocketAddr::new();
-        assert_eq!(osa.as_ptr(), &osa as *const _ as *const _);
-        assert_eq!(osa.as_mut_ptr(), &mut osa as *mut _ as *mut _);
+        assert_eq!(osa.as_ptr::<sockaddr>(), &osa as *const _ as *const _);
+        assert_eq!(osa.as_mut_ptr::<sockaddr>(), &mut osa as *mut _ as *mut _);
         assert_eq!(std::mem::size_of::<sockaddr_in6>(), osa.capacity());
     }
 
@@ -632,9 +646,10 @@ mod tests {
             assert_eq!(*sa_len, 0);
         });
         // null pointers
-        unsafe { osa4.copy_to_raw(std::ptr::null_mut(), std::ptr::null_mut::<socklen_t>()).unwrap(); }
+        unsafe { osa4.copy_to_raw(std::ptr::null_mut::<sockaddr>(),
+                                  std::ptr::null_mut::<socklen_t>()).unwrap(); }
 
-        let mut null = unsafe { OsSocketAddr::copy_from_raw(std::ptr::null(), 456) };
+        let mut null = unsafe { OsSocketAddr::copy_from_raw(std::ptr::null::<sockaddr>(), 456) };
         assert_eq!(null.as_mut(), OsSocketAddr::new().as_mut());
     }
 
@@ -804,5 +819,38 @@ mod tests {
         let e = r.unwrap_err();
         assert_eq!(e, BadFamilyError(0));
         assert_eq!(e.to_string(), "not an ip address (family=0)");
+    }
+
+    #[test]
+    fn as_ptr_checked() {
+        let osa4 : OsSocketAddr = "127.0.0.1:456".parse().unwrap();
+        assert_eq!(osa4.as_ptr_checked::<sockaddr>(),     Ok(osa4.as_ptr()));
+        assert_eq!(osa4.as_ptr_checked::<sockaddr_in>(),  Ok(osa4.as_ptr()));
+        assert_eq!(osa4.as_ptr_checked::<sockaddr_in6>(), Err(BadFamilyError(AF_INET)));
+
+        let osa6 : OsSocketAddr = "[1234::5678]:90".parse().unwrap();
+        assert_eq!(osa6.as_ptr_checked::<sockaddr>(),     Ok(osa6.as_ptr()));
+        assert_eq!(osa6.as_ptr_checked::<sockaddr_in>(),  Err(BadFamilyError(AF_INET6)));
+        assert_eq!(osa6.as_ptr_checked::<sockaddr_in6>(), Ok(osa6.as_ptr()));
+
+        let osa0 = OsSocketAddr::new();
+        assert_eq!(osa0.as_ptr_checked::<sockaddr>(),     Err(BadFamilyError(0)));
+        assert_eq!(osa0.as_ptr_checked::<sockaddr_in>(),  Err(BadFamilyError(0)));
+        assert_eq!(osa0.as_ptr_checked::<sockaddr_in6>(), Err(BadFamilyError(0)));
+
+        unsafe {
+            let mut a4 : sockaddr_in = std::mem::zeroed();
+            let mut a4len = std::mem::size_of_val(&a4);
+
+            assert!(osa4.copy_to_raw(&mut a4 as *mut _, &mut a4len as *mut _).is_ok());
+            assert_eq!(a4len, std::mem::size_of_val(&a4));
+
+            assert!(osa6.copy_to_raw(&mut a4 as *mut _, &mut a4len as *mut _).is_err());
+            assert_eq!(a4len, 0);
+            a4len = std::mem::size_of_val(&a4);
+
+            assert!(osa0.copy_to_raw(&mut a4 as *mut _, &mut a4len as *mut _).is_err());
+            assert_eq!(a4len, 0);
+        }
     }
 }
