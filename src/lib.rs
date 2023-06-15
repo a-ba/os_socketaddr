@@ -536,13 +536,10 @@ mod tests {
     use std::net::SocketAddrV6;
 
     #[cfg(not(target_os = "windows"))]
-    use libc::{in6_addr, in_addr, socklen_t};
+    use libc::{in6_addr, in_addr, SOCK_DGRAM};
 
     #[cfg(target_os = "windows")]
-    use winapi::{
-        shared::{in6addr::in6_addr, inaddr::in_addr},
-        um::ws2tcpip::socklen_t,
-    };
+    use winapi::shared::{in6addr::in6_addr, inaddr::in_addr, ws2def::SOCK_DGRAM};
 
     fn check_as_mut(osa: &mut OsSocketAddr) {
         let ptr = osa as *mut _ as usize;
@@ -853,4 +850,31 @@ mod tests {
             assert_eq!(a4len, 0);
         }
     }
+
+    #[test]
+    fn sendto() {
+        let payload : [u8;4] = [188, 220, 61, 58];
+
+        let std_sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+
+        let sys_sock = unsafe { libc::socket(AF_INET, SOCK_DGRAM, 0) };
+        assert!(sys_sock > 0);
+        let mut sys_osa = OsSocketAddr::from("127.0.0.1:0".parse().unwrap());
+        let bind_result = unsafe{libc::bind(sys_sock, sys_osa.as_ptr(), sys_osa.len())};
+        assert_eq!(bind_result, 0);
+        let mut sys_osalen = sys_osa.capacity();
+        unsafe{libc::getsockname(sys_sock, sys_osa.as_mut_ptr(), &mut sys_osalen as *mut _)};
+
+        let to = OsSocketAddr::from(std_sock.local_addr().unwrap());
+        let nb = unsafe{libc::sendto(sys_sock, payload.as_ptr() as *const _, payload.len() as _, 0,
+                                     to.as_ptr(), to.len())};
+        assert_eq!(nb as usize, payload.len());
+
+        let mut buf = [0u8;8];
+        let (nb, from) = std_sock.recv_from(&mut buf).unwrap();
+        assert_eq!(nb, payload.len());
+        assert_eq!(buf[..nb], payload);
+        assert_eq!(Some(from), sys_osa.into());
+    }
+
 }
