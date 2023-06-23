@@ -23,8 +23,10 @@ This crate provides `OsSocketAddr` which holds a `libc::sockaddr` (containing an
 address) and the conversion functions:
 
   - from/into `SocketAddr`
-  - from `(*const sockaddr, socklen_t)`
-  - into `(*mut sockaddr, *mut socklen_t)`
+  - from `(*const sockaddr, SockLen)`
+  - into `(*mut sockaddr, *mut Socklen)`
+
+where `SockLen` may be any of `i32`, `u32`, `i64`, `u64`, `isize` or `usize`.
 
 ## Supported targets   `#[cfg(target_os="xxxxxx")]`
 

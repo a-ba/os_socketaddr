@@ -12,8 +12,11 @@
 //! address) and the conversion functions:
 //!
 //!   - from/into `SocketAddr`
-//!   - from `(*const sockaddr, socklen_t)`
-//!   - into `(*mut sockaddr, *mut socklen_t)`
+//!   - from `(*const sockaddr, SockLen)`
+//!   - into `(*mut sockaddr, *mut SockLen)`
+//!
+//! where [SockLen] may be any of [i32], [u32], [i64], [u64], [isize] or [usize].
+//!
 //!
 //! # Example
 //!
@@ -24,10 +27,6 @@
 //!
 //! use std::net::{SocketAddr,UdpSocket};
 //! use self::libc::{c_int, c_void, size_t, ssize_t, sockaddr};
-//! #[cfg(target_family = "unix")]
-//! use libc::socklen_t;
-//! #[cfg(target_family = "windows")]
-//! use winapi::um::ws2tcpip::socklen_t;
 //!
 //! use self::os_socketaddr::OsSocketAddr;
 //!
@@ -42,7 +41,7 @@
 //! {
 //!     let addr : OsSocketAddr = dst.into();
 //!     unsafe {
-//!         libc::sendto(socket, payload.as_ptr() as *const c_void, payload.len() as size_t, 0,
+//!         libc::sendto(socket, payload.as_ptr() as *const c_void, payload.len(), 0,
 //!                      addr.as_ptr(), addr.len())
 //!     }
 //! }
@@ -67,7 +66,7 @@
 //! #[no_mangle]
 //! pub unsafe extern "C" fn send_to(
 //!         sock: *const UdpSocket, buf: *const u8, buflen: size_t,
-//!         addr: *const sockaddr, addrlen: socklen_t) -> ssize_t
+//!         addr: *const sockaddr, addrlen: size_t) -> ssize_t
 //! {
 //! 
 //!     let Some(dst) = OsSocketAddr::copy_from_raw(addr, addrlen).into_addr() else {
@@ -85,7 +84,7 @@
 //! #[no_mangle]
 //! pub unsafe extern "C" fn recv_from(
 //!         sock: *const UdpSocket, buf: *mut u8, buflen: size_t,
-//!         addr: *mut sockaddr, addrlen: *mut socklen_t) -> ssize_t
+//!         addr: *mut sockaddr, addrlen: *mut size_t) -> ssize_t
 //! {
 //!     let slice = std::slice::from_raw_parts_mut(buf, buflen);
 //!     match (*sock).recv_from(slice) {
@@ -112,7 +111,7 @@
 //!     let mut nb : u32 = 0;
 //!     match unsafe {
 //!         winapi::um::winsock2::WSASendTo(socket, payload, 1u32, &mut nb, 0u32,
-//!                                         addr.as_ptr(), addr.len() as i32,
+//!                                         addr.as_ptr(), addr.len(),
 //!                                         std::ptr::null_mut::<winapi::um::minwinbase::OVERLAPPED>(), None)
 //!     } {
 //!         0 => nb as ssize_t,
@@ -143,7 +142,7 @@
 
 extern crate libc;
 
-use std::convert::TryInto;
+use std::convert::{TryFrom,TryInto};
 use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr,SocketAddrV4,SocketAddrV6};
 use std::str::FromStr;
 
@@ -165,8 +164,10 @@ use winapi::shared::{
 /// It also provides the conversion functions:
 ///
 ///   - from/into `SocketAddr`
-///   - from `(*const sockaddr, socklen_t)`
-///   - into `(*mut sockaddr, *mut socklen_t)`
+///   - from `(*const sockaddr, SockLen)`
+///   - into `(*mut sockaddr, *mut SockLen)`
+///
+/// where [SockLen] may be any of [i32], [u32], [i64], [u64], [isize] or [usize].
 ///
 /// See [crate] level documentation.
 ///
@@ -176,7 +177,6 @@ pub union OsSocketAddr {
     sa4: sockaddr_in,
     sa6: sockaddr_in6,
 }
-
 
 /// Portable re-export of `socklen_t`
 ///
@@ -189,6 +189,16 @@ pub use libc::socklen_t;
 /// Uses `winapi::um::ws2tcpip::socklen_t` on windows and `libc::socklen_t` on other systems.
 #[cfg(target_os = "windows")]
 pub use winapi::um::ws2tcpip::socklen_t;
+
+
+/// Trait used for representing the socket address length in any 32 or 64 bit format.
+pub trait SockLen : TryFrom<usize> + TryInto<usize> + Copy + Default {}
+impl SockLen for i32 {}
+impl SockLen for u32 {}
+impl SockLen for i64 {}
+impl SockLen for u64 {}
+impl SockLen for isize {}
+impl SockLen for usize {}
 
 
 #[allow(dead_code)]
@@ -209,16 +219,20 @@ impl OsSocketAddr {
     /// of [sockaddr_in6] then the resulting address is truncated. If less, then the extra bytes
     /// are zeroed.
     ///
+    /// If the conversion from [SockLen] into [usize] fails, then `len` is assumed to be 0.
+    ///
     /// If `ptr` is NULL, then the resulting address is zeroed.
     ///
     /// See also [OsSocketAddr::copy_to_raw]
-    pub unsafe fn copy_from_raw(ptr: *const sockaddr, len: socklen_t) -> Self {
+    pub unsafe fn copy_from_raw<L: SockLen>(ptr: *const sockaddr, len: L) -> Self {
         let mut addr = OsSocketAddr::new();
         if !ptr.is_null() {
-            let src = std::slice::from_raw_parts(ptr as *const u8, len as usize);
-            let dst = addr.as_mut();
-            let nb = src.len().min(dst.len());
-            dst[..nb].copy_from_slice(&src[..nb]);
+            len.try_into().map(|ulen| {
+                let src = std::slice::from_raw_parts(ptr as *const u8, ulen);
+                let dst = addr.as_mut();
+                let nb = src.len().min(dst.len());
+                dst[..nb].copy_from_slice(&src[..nb]);
+            }).ok();
         }
         addr
     }
@@ -226,7 +240,7 @@ impl OsSocketAddr {
     /// Create a new socket address from a raw slice
     #[deprecated(since="0.2.4", note="use copy_from_raw()")]
     pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
-        Self::copy_from_raw(ptr as *const sockaddr, len as socklen_t)
+        Self::copy_from_raw(ptr as *const sockaddr, len)
     }
 
 
@@ -238,24 +252,28 @@ impl OsSocketAddr {
     /// If the provided buffer is too small, then the returned address is truncated (and `len` will
     /// have a greater value than before the call).
     ///
+    /// If the conversion of from [SockLen] into [usize] fails, then `*len` is assumed to be 0.
+    ///
     /// If `ptr` is NULL then the function does nothing.
     ///
     /// If the value of .sa_family does not resolve to AF_INET or AF_INET6 then the function
     /// sets `*len` to 0 and returns an error.
     /// 
     /// See also [OsSocketAddr::copy_from_raw]
-    pub unsafe fn copy_to_raw(&self, ptr: *mut sockaddr, len: *mut socklen_t) -> Result<(), BadFamilyError>
+    pub unsafe fn copy_to_raw<L>(&self, ptr: *mut sockaddr, len: *mut L) -> Result<(), BadFamilyError>
+        where L: SockLen
     {
         if !ptr.is_null() {
             let src = self.as_ref();
-            let dst = std::slice::from_raw_parts_mut(ptr as *mut u8, *len as usize);
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut u8,
+                                                     (*len).try_into().unwrap_or_default());
             if src.len() == 0 {
-                *len = 0;
+                *len = L::default();
                 return Err(BadFamilyError(self.sa4.sin_family as i32))
             }
             let nb = src.len().min(dst.len());
             dst[..nb].copy_from_slice(&src[..nb]);
-            *len = src.len() as socklen_t
+            *len = src.len().try_into().unwrap_or_default();
         }
         Ok(())
     }
@@ -282,17 +300,17 @@ impl OsSocketAddr {
     /// * `AF_INET`  -> the size of [sockaddr_in]
     /// * `AF_INET6` -> the size of [sockaddr_in6]
     /// * *other* -> 0
-    pub fn len(&self) -> socklen_t {
+    pub fn len<L: SockLen>(&self) -> L {
         (match unsafe { self.sa6.sin6_family } as i32 {
             AF_INET => std::mem::size_of::<sockaddr_in>(),
             AF_INET6 => std::mem::size_of::<sockaddr_in6>(),
             _ => 0,
-        }) as socklen_t
+        }).try_into().unwrap_or_default()
     }
 
     /// Return the size of the internal buffer
-    pub fn capacity(&self) -> socklen_t {
-        std::mem::size_of::<sockaddr_in6>() as socklen_t
+    pub fn capacity<L: SockLen>(&self) -> L {
+        std::mem::size_of::<sockaddr_in6>().try_into().unwrap_or_default()
     }
 
     /// Get a pointer to the internal buffer
@@ -314,7 +332,7 @@ impl AsRef<[u8]> for OsSocketAddr {
     ///
     fn as_ref(&self) -> &[u8] {
         unsafe {
-            std::slice::from_raw_parts(&self.sa6 as *const _ as *const u8, self.len() as usize)
+            std::slice::from_raw_parts(&self.sa6 as *const _ as *const u8, self.len())
         }
     }
 }
@@ -325,7 +343,7 @@ impl AsMut<[u8]> for OsSocketAddr {
         unsafe {
             std::slice::from_raw_parts_mut(
                 &mut self.sa6 as *mut _ as *mut u8,
-                self.capacity() as usize,
+                self.capacity(),
             )
         }
     }
@@ -504,10 +522,13 @@ mod tests {
     use std::net::SocketAddrV6;
 
     #[cfg(not(target_os = "windows"))]
-    use libc::{in6_addr, in_addr};
+    use libc::{in6_addr, in_addr, socklen_t};
 
     #[cfg(target_os = "windows")]
-    use winapi::shared::{in6addr::in6_addr, inaddr::in_addr};
+    use winapi::{
+        shared::{in6addr::in6_addr, inaddr::in_addr},
+        um::ws2tcpip::socklen_t,
+    };
 
     fn check_as_mut(osa: &mut OsSocketAddr) {
         let ptr = osa as *mut _ as usize;
@@ -521,7 +542,7 @@ mod tests {
         let mut osa = OsSocketAddr::new();
         assert_eq!(osa.as_ptr(), &osa as *const _ as *const _);
         assert_eq!(osa.as_mut_ptr(), &mut osa as *mut _ as *mut _);
-        assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
+        assert_eq!(std::mem::size_of::<sockaddr_in6>(), osa.capacity());
     }
 
     #[test]
@@ -611,7 +632,7 @@ mod tests {
             assert_eq!(*sa_len, 0);
         });
         // null pointers
-        unsafe { osa4.copy_to_raw(std::ptr::null_mut(), std::ptr::null_mut()).unwrap(); }
+        unsafe { osa4.copy_to_raw(std::ptr::null_mut(), std::ptr::null_mut::<socklen_t>()).unwrap(); }
 
         let mut null = unsafe { OsSocketAddr::copy_from_raw(std::ptr::null(), 456) };
         assert_eq!(null.as_mut(), OsSocketAddr::new().as_mut());
@@ -662,8 +683,8 @@ mod tests {
                 &sa as *const _ as *const sockaddr,
                 std::mem::size_of_val(&sa) as socklen_t,
             );
-            assert_eq!(osa.len() as usize, std::mem::size_of::<sockaddr_in>());
-            assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
+            assert_eq!(std::mem::size_of::<sockaddr_in>(),  osa.len());
+            assert_eq!(std::mem::size_of::<sockaddr_in6>(), osa.capacity());
             assert_eq!(osa.into_addr(), Some(addr));
             assert_eq!(osa.try_into(), Ok(addr));
             assert_eq!(OsSocketAddr::from(addr).into_addr(), Some(addr));
@@ -739,8 +760,8 @@ mod tests {
                 &sa as *const _ as *const sockaddr,
                 std::mem::size_of_val(&sa) as socklen_t,
             );
-            assert_eq!(osa.len() as usize, std::mem::size_of::<sockaddr_in6>());
-            assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
+            assert_eq!(std::mem::size_of::<sockaddr_in6>(), osa.len());
+            assert_eq!(std::mem::size_of::<sockaddr_in6>(), osa.capacity());
             assert_eq!(osa.into_addr(), Some(addr));
             assert_eq!(osa.try_into(), Ok(addr));
             assert_eq!(OsSocketAddr::from(addr).into_addr(), Some(addr));
@@ -763,8 +784,8 @@ mod tests {
             {
                 let buf = osa.as_ref();
                 assert_eq!(buf.len(), 0);
-                assert_eq!(osa.len(), 0);
-                assert_eq!(osa.capacity() as usize, std::mem::size_of::<sockaddr_in6>());
+                assert_eq!(0_isize, osa.len());
+                assert_eq!(std::mem::size_of::<sockaddr_in6>(), osa.capacity());
             }
             check_as_mut(&mut osa);
         }
